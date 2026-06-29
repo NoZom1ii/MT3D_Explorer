@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>MT3D Explorer - 测试页面</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #cesiumContainer { width: 100%; height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    <script src="../Cesium/Cesium.js"></script>
+    <script>
+        // 基础 Cesium 测试
+        Cesium.CreditDisplay.cesiumCredit = null;
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            terrainProvider: Cesium.createWorldTerrain(),
+            animation: true,
+            timeline: true,
+            infoBox: false,
+        });
+
+        // 添加一个测试标注
+        viewer.entities.add({
+            name: '测试点',
+            position: Cesium.Cartesian3.fromDegrees(116.4, 39.9, 0),
+            point: { pixelSize: 10, color: Cesium.Color.RED },
+            label: { text: 'Beijing', font: '14px sans-serif', fillColor: Cesium.Color.WHITE, pixelOffset: new Cesium.Cartesian2(0, -20) }
+        });
+
+        console.log('MT3D Test page loaded successfully');
+    </script>
+</body>
+</html>
