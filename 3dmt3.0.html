@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cesium 地下电阻率模型 - 低阻红色 + 强制置顶 + 浅层清除 + Home键</title>
+    <script src="./Cesium/Cesium.js"></script>
+    <link rel="stylesheet" href="./Cesium/Widgets/widgets.css">
+    <style>
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+        #Cesiumcontainer { width: 100%; height: 100%; }
+        .cesium-widget-credits { display: none; }
+        .floating-panel {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(30,30,40,0.85); backdrop-filter: blur(8px); border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            color: white; font-family: sans-serif; min-width: 320px;
+        }
+        .panel-header { padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; background: rgba(0,0,0,0.5); border-radius: 12px; }
+        .panel-header:hover { background: rgba(0,0,0,0.7); }
+        .panel-content { padding: 12px 16px; max-height: 500px; overflow-y: auto; transition: max-height 0.3s ease, padding 0.3s ease; }
+        .panel-content.collapsed { max-height: 0; padding: 0 16px; overflow: hidden; }
+        .control-group { margin-bottom: 12px; }
+        .control-group label { display: block; margin-bottom: 4px; font-size: 13px; font-weight: bold; }
+        .control-group input, .control-group select, .control-group button { width: 100%; padding: 6px; border-radius: 6px; border: none; background: rgba(255,255,255,0.2); color: white; cursor: pointer; }
+        .control-group button { background: #2c6e9e; margin-top: 8px; }
+        .control-group button:hover { background: #1e4a6e; }
+        .control-group button:disabled { background: #555; cursor: not-allowed; }
+        .status { font-size: 12px; margin-top: 8px; color: #ddd; word-break: break-word; }
+        hr { border-color: rgba(255,255,255,0.2); margin: 8px 0; }
+        .top-right-control {
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); padding: 8px 16px;
+            border-radius: 20px; color: white; font-size: 12px; display: flex;
+            align-items: center; gap: 10px; border: 1px solid rgba(255,255,255,0.2);
+            flex-direction: column;
+            min-width: 140px;
+        }
+        .top-right-control > div {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            justify-content: space-between;
+        }
+        .top-right-control span { white-space: nowrap; }
+        .top-right-control input { width: 100px; cursor: pointer; background: rgba(255,255,255,0.3); }
+        .top-right-control button {
+            background: #2c6e9e;
+            border: none;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 16px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 5px;
+        }
+        .top-right-control button:hover { background: #1e4a6e; }
+        .colorbar-container {
+            position: absolute; bottom: 20px; right: 20px; z-index: 1000;
+            background: rgba(0,0,0,0.7); padding: 8px; border-radius: 8px;
+            color: white; font-size: 12px; text-align: center;
+        }
+        canvas#colorbarCanvas { width: 30px; height: 200px; display: block; margin: 5px auto; }
+    </style>
+</head>
+<body>
+    <div id="Cesiumcontainer"></div>
+
+    <div class="floating-panel" id="controlPanel">
+        <div class="panel-header" id="panelHeader">
+            <span>📐 模型控制面板</span>
+            <span id="toggleIcon">▲</span>
+        </div>
+        <div class="panel-content" id="panelContent">
+            <div class="control-group">
+                <label>步骤1：网格尺寸文件（.ws）</label>
+                <input type="file" id="sizeFileInput">
+            </div>
+            <div class="control-group">
+                <label>步骤2：点文件（.xyz，可多选，文件名需含深度，如 0km.xyz）<br>文件内第三列为电阻率对数值（log10电阻率）</label>
+                <input type="file" id="pointsFileInput" multiple accept=".xyz">
+            </div>
+            <div class="control-group">
+                <label><input type="checkbox" id="coreOnlyCheckbox"> 🔲 仅显示核心区地表网格</label>
+            </div>
+            <div class="control-group">
+                <label>⚡ 电阻率筛选（显示实际电阻率 &lt; 阈值的单元）</label>
+                <input type="text" id="resistivityThreshold" placeholder="例如: 100" value="100">
+            </div>
+            <div class="control-group">
+                <button id="filterAndShowBtn" disabled>🔍 筛选并显示地下单元</button>
+                <button id="clearModelsBtn" disabled>🗑️ 清除所有地下单元</button>
+            </div>
+            <div class="control-group">
+                <label>🗑️ 浅层清除（移除深度 &lt; 阈值的层）</label>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="shallowDepth" placeholder="深度阈值 (km)" value="1">
+                    <button id="shallowClearBtn" disabled>清除浅层</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <button id="drawGridBtn" disabled>🧩 绘制地表网格（重新加载所有文件）</button>
+            </div>
+            <div id="status" class="status">等待文件...</div>
+        </div>
+    </div>
+
+    <div class="top-right-control">
+        <div>
+            <span>🌍 地球透明度</span>
+            <input type="range" id="globeAlphaSlider" min="0" max="1" step="0.01" value="0.5">
+        </div>
+        <button id="homeBtn" disabled>🏠 Home (核心区上空20万km)</button>
+    </div>
+
+    <div class="colorbar-container" id="colorbarContainer" style="display: none;">
+        <div>电阻率 (Ω·m)</div>
+        <canvas id="colorbarCanvas" width="30" height="200"></canvas>
+        <div id="colorbarMin">—</div>
+        <div id="colorbarMax">—</div>
+    </div>
+
+    <script>
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NDFmODMwYS02M2MxLTRmMGItYWY3YS01OTA4MTQ0ZWYxNTgiLCJpZCI6MzI4ODM5LCJpYXQiOjE3NTQzNzgxNjV9.EsQ8CtYMpEow4fVaI059dRmh54KXe2dEcpq6tP4J9vg';
+        
+        const viewer = new Cesium.Viewer('Cesiumcontainer', {
+            animation: false, timeline: false, geocoder: false, homeButton: false,
+            sceneModePicker: false, navigationHelpButton: false,
+            baseLayer: false,
+        });
+        
+        try {
+            const tdtProvider = new Cesium.WebMapTileServiceImageryProvider({
+                url: "http://t0.tianditu.gov.cn/img_w/wmts?tk=416f0b679ea2e217fbe325ead88ae8c9",
+                layer: "img", style: "default", format: "tiles", tileMatrixSetID: "w",
+                maximumLevel: 18, credit: new Cesium.Credit("天地图")
+            });
+            viewer.imageryLayers.addImageryProvider(tdtProvider);
+        } catch(e) { console.warn("天地图加载失败", e); }
+
+        // 透明度
+        const globeAlphaSlider = document.getElementById('globeAlphaSlider');
+        globeAlphaSlider.addEventListener('input', (e) => {
+            const alpha = parseFloat(e.target.value);
+            if (viewer.imageryLayers.length > 0) viewer.imageryLayers.get(0).alpha = alpha;
+            viewer.scene.globe.baseColor = new Cesium.Color(1.0, 1.0, 1.0, alpha);
+        });
+        globeAlphaSlider.dispatchEvent(new Event('input'));
+
+        // 折叠面板
+        const panelContent = document.getElementById('panelContent');
+        const toggleIcon = document.getElementById('toggleIcon');
+        document.getElementById('panelHeader').addEventListener('click', () => {
+            const isCollapsed = panelContent.classList.toggle('collapsed');
+            toggleIcon.innerText = isCollapsed ? '▼' : '▲';
+        });
+
+        // ---------- 全局变量 ----------
+        let gridHeights = null, gridWidths = null;
+        let sizeFileLoaded = false;
+        let allSurfaceCells = [];
+        let coreCells = [];
+        let coreSize = { height: null, width: null };
+        
+        let cubesDatabase = [];
+        let currentDisplayedModels = [];
+        
+        // UI 控件
+        const drawBtn = document.getElementById('drawGridBtn');
+        const filterBtn = document.getElementById('filterAndShowBtn');
+        const clearBtn = document.getElementById('clearModelsBtn');
+        const shallowClearBtn = document.getElementById('shallowClearBtn');
+        const homeBtn = document.getElementById('homeBtn');
+        const sizeInput = document.getElementById('sizeFileInput');
+        const pointsInput = document.getElementById('pointsFileInput');
+        const thresholdInput = document.getElementById('resistivityThreshold');
+        
+        function enableDrawButton() { drawBtn.disabled = false; }
+        function disableDrawButton() { drawBtn.disabled = true; }
+        function enableFilterButtons() {
+            filterBtn.disabled = false;
+            clearBtn.disabled = false;
+            shallowClearBtn.disabled = false;
+            homeBtn.disabled = false;
+        }
+        function disableFilterButtons() {
+            filterBtn.disabled = true;
+            clearBtn.disabled = true;
+            shallowClearBtn.disabled = true;
+            homeBtn.disabled = true;
+        }
+        
+        sizeInput.addEventListener('change', () => { enableDrawButton(); });
+        pointsInput.addEventListener('change', () => { enableDrawButton(); });
+
+        // ---------- 解析尺寸文件 ----------
+        function parseSizeFile(content) {
+            const lines = content.split(/\r?\n/);
+            const numbers = [];
+            for (let i = 2; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line === '') continue;
+                const parts = line.split(/\s+/);
+                for (let p of parts) {
+                    const num = parseFloat(p);
+                    if (isNaN(num)) continue;
+                    if (Math.abs(num - Math.round(num)) > 1e-6) {
+                        throw new Error(`尺寸文件中的值必须为整数（发现非整数: ${num}）`);
+                    }
+                    numbers.push(Math.round(num));
+                }
+            }
+            if (numbers.length < 4) throw new Error("有效数字不足");
+            let idx = 0;
+            const heights = [];
+            const vertStart = numbers[idx];
+            heights.push(vertStart);
+            idx++;
+            while (idx < numbers.length) {
+                const val = numbers[idx];
+                heights.push(val);
+                idx++;
+                if (val === vertStart) break;
+            }
+            if (heights.length < 2) throw new Error("竖直方向数据不完整");
+            if (idx >= numbers.length) throw new Error("没有水平方向数据");
+            const widths = [];
+            const horStart = numbers[idx];
+            widths.push(horStart);
+            idx++;
+            while (idx < numbers.length) {
+                const val = numbers[idx];
+                widths.push(val);
+                idx++;
+                if (val === horStart) break;
+            }
+            if (widths.length < 2) throw new Error("水平方向数据不完整");
+            return { heights, widths };
+        }
+
+        // ---------- 解析单个点文件：将第三列电阻率对数值转换为实际值 (10^val) ----------
+        async function parsePointsFile(file) {
+            const fileName = file.name;
+            const depthMatch = fileName.match(/(\d+(?:\.\d+)?)\s*(km|m)/i);
+            if (!depthMatch) throw new Error(`文件名 ${fileName} 中未找到深度信息`);
+            let depth = parseFloat(depthMatch[1]);
+            const unit = depthMatch[2].toLowerCase();
+            if (unit === 'km') depth *= 1000;
+            if (isNaN(depth)) throw new Error(`深度解析失败: ${fileName}`);
+            
+            const content = await file.text();
+            const lines = content.split(/\r?\n/);
+            const points = [];
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (line === '') continue;
+                const parts = line.split(/\s+/);
+                if (parts.length < 3) throw new Error(`文件 ${fileName} 第${i+1}行数据不足3列`);
+                const lng = parseFloat(parts[0]);
+                const lat = parseFloat(parts[1]);
+                const resistivity_log = parseFloat(parts[2]);
+                if (isNaN(lng) || isNaN(lat) || isNaN(resistivity_log)) continue;
+                const resistivity_real = Math.pow(10, resistivity_log);
+                points.push({ lng, lat, resistivity: resistivity_real });
+            }
+            if (points.length === 0) throw new Error(`文件 ${fileName} 未找到有效点`);
+            return { depth, points };
+        }
+
+        function findMode(arr) {
+            if (arr.length === 0) return null;
+            const freq = new Map();
+            for (let v of arr) freq.set(v, (freq.get(v) || 0) + 1);
+            let mode = arr[0], maxCount = 0;
+            for (let [v, c] of freq.entries()) if (c > maxCount) { maxCount = c; mode = v; }
+            return mode;
+        }
+
+        function offsetByMeters(lng, lat, east, north) {
+            const latRad = lat * Math.PI / 180;
+            const perDegLat = 111320;
+            const perDegLng = 111320 * Math.cos(latRad);
+            return { lng: lng + east / perDegLng, lat: lat + north / perDegLat };
+        }
+
+        function getColorFromResistivity(rho, minRho, maxRho) {
+            if (minRho === maxRho) return Cesium.Color.RED;
+            let t = (rho - minRho) / (maxRho - minRho);
+            let hue = 0.8 * t;
+            return Cesium.Color.fromHsl(hue, 1.0, 0.5);
+        }
+
+        function drawColorbar(minVal, maxVal) {
+            const canvas = document.getElementById('colorbarCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = 30, h = 200;
+            canvas.width = w; canvas.height = h;
+            const imgData = ctx.createImageData(w, h);
+            for (let y = 0; y < h; y++) {
+                const t = 1 - y / h;
+                const hue = 0.8 * t;
+                const rgb = Cesium.Color.fromHsl(hue, 1.0, 0.5);
+                const r = Math.floor(rgb.red * 255);
+                const g = Math.floor(rgb.green * 255);
+                const b = Math.floor(rgb.blue * 255);
+                for (let x = 0; x < w; x++) {
+                    const idx = (y * w + x) * 4;
+                    imgData.data[idx] = r;
+                    imgData.data[idx+1] = g;
+                    imgData.data[idx+2] = b;
+                    imgData.data[idx+3] = 255;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            document.getElementById('colorbarMin').innerText = minVal.toFixed(2);
+            document.getElementById('colorbarMax').innerText = maxVal.toFixed(2);
+        }
+
+        function clearAllEntities() {
+            const entities = viewer.entities.values;
+            for (let i = entities.length-1; i >= 0; i--) {
+                viewer.entities.remove(entities[i]);
+            }
+            currentDisplayedModels = [];
+        }
+
+        function renderSurfaceGrid(onlyCore) {
+            for (let cell of allSurfaceCells) {
+                const { lng, lat, width, height, id, isCore } = cell;
+                const br = offsetByMeters(lng, lat, width, 0);
+                const tl = offsetByMeters(lng, lat, 0, height);
+                const tr = offsetByMeters(lng, lat, width, height);
+                const positions = [
+                    Cesium.Cartesian3.fromDegrees(lng, lat),
+                    Cesium.Cartesian3.fromDegrees(br.lng, br.lat),
+                    Cesium.Cartesian3.fromDegrees(tr.lng, tr.lat),
+                    Cesium.Cartesian3.fromDegrees(tl.lng, tl.lat)
+                ];
+                const entity = viewer.entities.add({
+                    id: id,
+                    polygon: {
+                        hierarchy: new Cesium.PolygonHierarchy(positions),
+                        material: Cesium.Color.RED.withAlpha(0.4),
+                        outline: true, outlineColor: Cesium.Color.BLACK, outlineWidth: 1
+                    },
+                    properties: { length: height, width, longitude: lng, latitude: lat, isCore }
+                });
+                entity.show = (onlyCore ? isCore : true);
+            }
+        }
+
+        // 根据数据库中的立方体数据生成实体（强制置顶）
+        function buildModelsFromCubes(cubes, minRho, maxRho) {
+            const models = [];
+            for (let cube of cubes) {
+                const { lng, lat, width, height, thickness, layerCenter, resistivity_real } = cube;
+                const color = getColorFromResistivity(resistivity_real, minRho, maxRho);
+                const halfW = width/2, halfH = height/2;
+                const center = offsetByMeters(lng, lat, halfW, halfH);
+                const boxCenter = Cesium.Cartesian3.fromDegrees(center.lng, center.lat, -layerCenter);
+                const entity = viewer.entities.add({
+                    id: `cube_${cube.layerIndex}_${cube.row}_${cube.col}`,
+                    position: boxCenter,
+                    box: {
+                        dimensions: new Cesium.Cartesian3(width, height, thickness),
+                        material: color.withAlpha(0.7),
+                        outline: false
+                    },
+                    properties: { depth: cube.depth, resistivity: resistivity_real },
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                });
+                models.push(entity);
+            }
+            return models;
+        }
+
+        // 浅层清除：基于立方体的深度（层深度）移除深度小于阈值的所有立方体
+        function shallowClear() {
+            if (!cubesDatabase.length) {
+                alert("请先加载数据。");
+                return;
+            }
+            const thresholdKm = parseFloat(document.getElementById('shallowDepth').value);
+            if (isNaN(thresholdKm) || thresholdKm <= 0) {
+                alert("请输入有效的深度阈值（正数，单位km）。");
+                return;
+            }
+            const thresholdMeters = thresholdKm * 1000;
+            const newDatabase = cubesDatabase.filter(cube => cube.depth >= thresholdMeters);
+            const removedCount = cubesDatabase.length - newDatabase.length;
+            if (removedCount === 0) {
+                alert("没有符合条件的立方体被清除。");
+                return;
+            }
+            cubesDatabase = newDatabase;
+            // 清除当前显示模型
+            for (let m of currentDisplayedModels) viewer.entities.remove(m);
+            currentDisplayedModels = [];
+            // 重新计算电阻率范围并更新色条
+            let minRho = Infinity, maxRho = -Infinity;
+            for (let cube of cubesDatabase) {
+                if (cube.resistivity_real < minRho) minRho = cube.resistivity_real;
+                if (cube.resistivity_real > maxRho) maxRho = cube.resistivity_real;
+            }
+            if (minRho !== Infinity) drawColorbar(minRho, maxRho);
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = statusDiv.innerHTML.replace(/立方体总数: \d+/, `立方体总数: ${cubesDatabase.length}`);
+            statusDiv.innerHTML += `<br>🗑️ 已清除 ${removedCount} 个深度 < ${thresholdKm} km 的立方体。`;
+            console.log(`浅层清除完成，剩余立方体: ${cubesDatabase.length}`);
+        }
+
+        // Home 视角：核心区中心上空 200,000 公里，南方斜俯视
+        function setHomeView() {
+            if (!coreCells.length) {
+                alert("请先加载数据并绘制地表网格。");
+                return;
+            }
+            let sumLng = 0, sumLat = 0;
+            for (let cell of coreCells) {
+                sumLng += cell.lng;
+                sumLat += cell.lat;
+            }
+            const centerLng = sumLng / coreCells.length;
+            const centerLat = sumLat / coreCells.length;
+            const height = 200000000; // 200,000 km = 200,000,000 m
+            const heading = Cesium.Math.toRadians(180); // 南方
+            const pitch = Cesium.Math.toRadians(-45);   // 斜俯视
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(centerLng, centerLat, height),
+                orientation: { heading: heading, pitch: pitch, roll: 0 },
+                duration: 2
+            });
+        }
+
+        // 主流程
+        async function drawAll() {
+            const statusDiv = document.getElementById('status');
+            if (!sizeFileLoaded) {
+                statusDiv.innerHTML = '⚠️ 请先导入网格尺寸文件！';
+                return;
+            }
+            const pointFiles = pointsInput.files;
+            if (pointFiles.length === 0) {
+                statusDiv.innerHTML = '⚠️ 请至少选择一个点文件！';
+                return;
+            }
+
+            try {
+                const rawLayers = [];
+                for (let file of pointFiles) {
+                    try {
+                        const { depth, points } = await parsePointsFile(file);
+                        rawLayers.push({ depth, points, fileName: file.name });
+                    } catch (err) {
+                        console.error(`解析失败: ${file.name}`, err);
+                        statusDiv.innerHTML += `<br>❌ 解析失败: ${file.name} - ${err.message}`;
+                    }
+                }
+                if (rawLayers.length === 0) throw new Error("没有成功解析任何点文件");
+
+                rawLayers.sort((a, b) => a.depth - b.depth);
+                const surfaceLayer = rawLayers.find(l => Math.abs(l.depth) < 1e-6);
+                const basePoints = surfaceLayer ? surfaceLayer.points : rawLayers[0].points;
+
+                const M = gridHeights.length, N = gridWidths.length;
+                if (basePoints.length !== M * N) throw new Error(`基准点数量(${basePoints.length})与网格尺寸(${M}x${N})不匹配`);
+                const coreH = findMode(gridHeights);
+                const coreW = findMode(gridWidths);
+                coreSize = { height: coreH, width: coreW };
+                const cells = [];
+                const coreList = [];
+                for (let i = 0; i < M; i++) {
+                    const height = gridHeights[i];
+                    for (let j = 0; j < N; j++) {
+                        const width = gridWidths[j];
+                        const { lng, lat } = basePoints[i * N + j];
+                        const isCore = (height === coreH && width === coreW);
+                        const cell = { id: `cell_${i}_${j}`, row: i, col: j, lng, lat, width, height, isCore };
+                        cells.push(cell);
+                        if (isCore) coreList.push(cell);
+                    }
+                }
+                allSurfaceCells = cells;
+                coreCells = coreList;
+                console.log(`核心区单元格数量: ${coreCells.length}`);
+
+                const sortedNonZero = rawLayers.filter(l => l.depth > 1e-6).sort((a,b) => a.depth - b.depth);
+                const layersDataTemp = [];
+                let prevDepth = 0;
+                for (let i = 0; i < sortedNonZero.length; i++) {
+                    const curDepth = sortedNonZero[i].depth;
+                    const thickness = curDepth - prevDepth;
+                    if (thickness <= 0) {
+                        console.warn(`层深度 ${curDepth}m 厚度为 ${thickness}，跳过`);
+                        continue;
+                    }
+                    const fullResistivity = sortedNonZero[i].points.map(p => p.resistivity);
+                    const coreResistivity = [];
+                    let valid = true;
+                    for (let cell of coreList) {
+                        const idx = cell.row * N + cell.col;
+                        if (idx >= fullResistivity.length) {
+                            valid = false;
+                            break;
+                        }
+                        coreResistivity.push(fullResistivity[idx]);
+                    }
+                    if (!valid) {
+                        console.warn(`层深度 ${curDepth}m 核心区电阻率提取失败，跳过`);
+                        continue;
+                    }
+                    layersDataTemp.push({
+                        depth: curDepth,
+                        thickness: thickness,
+                        resistivityValues: coreResistivity
+                    });
+                    prevDepth = curDepth;
+                }
+                if (layersDataTemp.length === 0) throw new Error("没有有效的层数据");
+
+                cubesDatabase = [];
+                let cumulativeDepth = 0;
+                for (let idx = 0; idx < layersDataTemp.length; idx++) {
+                    const layer = layersDataTemp[idx];
+                    const thickness = layer.thickness;
+                    const layerCenter = cumulativeDepth + thickness / 2;
+                    cumulativeDepth += thickness;
+                    for (let i = 0; i < coreCells.length; i++) {
+                        const cell = coreCells[i];
+                        cubesDatabase.push({
+                            layerIndex: idx,
+                            depth: layer.depth,
+                            thickness: thickness,
+                            layerCenter: layerCenter,
+                            width: cell.width,
+                            height: cell.height,
+                            lng: cell.lng,
+                            lat: cell.lat,
+                            resistivity_real: layer.resistivityValues[i],
+                            row: cell.row,
+                            col: cell.col
+                        });
+                    }
+                }
+                console.log(`立方体数据库构建完成，总数: ${cubesDatabase.length}`);
+
+                clearAllEntities();
+                const onlyCore = document.getElementById('coreOnlyCheckbox').checked;
+                renderSurfaceGrid(onlyCore);
+
+                let minRho = Infinity, maxRho = -Infinity;
+                for (let cube of cubesDatabase) {
+                    const r = cube.resistivity_real;
+                    if (r < minRho) minRho = r;
+                    if (r > maxRho) maxRho = r;
+                }
+                drawColorbar(minRho, maxRho);
+                document.getElementById('colorbarContainer').style.display = 'block';
+
+                statusDiv.innerHTML = `✅ 数据加载完成 | 核心区单元格: ${coreCells.length}<br>有效层数: ${layersDataTemp.length}<br>立方体总数: ${cubesDatabase.length}<br>电阻率范围: ${minRho.toFixed(2)}~${maxRho.toFixed(2)} Ω·m`;
+                disableDrawButton();
+                enableFilterButtons();
+                for (let m of currentDisplayedModels) viewer.entities.remove(m);
+                currentDisplayedModels = [];
+            } catch (err) {
+                statusDiv.innerHTML = `❌ 绘制出错: ${err.message}`;
+                console.error(err);
+                enableDrawButton();
+                disableFilterButtons();
+            }
+        }
+
+        // 筛选并显示
+        async function filterAndShow() {
+            if (!cubesDatabase.length) {
+                alert("请先加载数据（点击“绘制地表网格”）。");
+                return;
+            }
+            const thresholdText = thresholdInput.value.trim();
+            if (!thresholdText) {
+                alert("请输入电阻率阈值，例如 100");
+                return;
+            }
+            let operator = '<';
+            let valueStr = thresholdText;
+            if (thresholdText.includes('<=')) {
+                operator = '<=';
+                valueStr = thresholdText.split('<=')[1].trim();
+            } else if (thresholdText.includes('<')) {
+                operator = '<';
+                valueStr = thresholdText.split('<')[1].trim();
+            } else if (thresholdText.includes('>')) {
+                operator = '>';
+                valueStr = thresholdText.split('>')[1].trim();
+            } else if (thresholdText.includes('>=')) {
+                operator = '>=';
+                valueStr = thresholdText.split('>=')[1].trim();
+            }
+            const threshold = parseFloat(valueStr);
+            if (isNaN(threshold)) {
+                alert("阈值必须是数字，例如 100");
+                return;
+            }
+
+            let filtered = [];
+            for (let cube of cubesDatabase) {
+                let ok = false;
+                if (operator === '<') ok = cube.resistivity_real < threshold;
+                else if (operator === '<=') ok = cube.resistivity_real <= threshold;
+                else if (operator === '>') ok = cube.resistivity_real > threshold;
+                else if (operator === '>=') ok = cube.resistivity_real >= threshold;
+                if (ok) filtered.push(cube);
+            }
+            const count = filtered.length;
+            if (count === 0) {
+                alert("没有找到符合条件的立方体。");
+                return;
+            }
+            const MAX_WARNING = 5000;
+            if (count > MAX_WARNING) {
+                const confirmMsg = `符合条件的立方体数量为 ${count}，超过 ${MAX_WARNING} 个，可能导致浏览器卡顿或崩溃。是否继续显示？`;
+                if (!confirm(confirmMsg)) return;
+            }
+            for (let m of currentDisplayedModels) viewer.entities.remove(m);
+            let minR = Infinity, maxR = -Infinity;
+            for (let cube of filtered) {
+                if (cube.resistivity_real < minR) minR = cube.resistivity_real;
+                if (cube.resistivity_real > maxR) maxR = cube.resistivity_real;
+            }
+            if (minR === Infinity) return;
+            const newModels = buildModelsFromCubes(filtered, minR, maxR);
+            currentDisplayedModels = newModels;
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML += `<br>🔍 筛选显示: ${count} 个立方体 (${operator} ${threshold})，电阻率范围 ${minR.toFixed(2)}~${maxR.toFixed(2)} Ω·m`;
+        }
+
+        function clearModels() {
+            for (let m of currentDisplayedModels) viewer.entities.remove(m);
+            currentDisplayedModels = [];
+            const statusDiv = document.getElementById('status');
+            const lines = statusDiv.innerHTML.split('<br>');
+            const filteredLines = lines.filter(line => !line.includes('🔍 筛选显示:'));
+            statusDiv.innerHTML = filteredLines.join('<br>');
+        }
+
+        // 事件绑定
+        sizeInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => {
+                try {
+                    const { heights, widths } = parseSizeFile(ev.target.result);
+                    gridHeights = heights;
+                    gridWidths = widths;
+                    sizeFileLoaded = true;
+                    document.getElementById('status').innerHTML = `✅ 尺寸文件已加载：${heights.length}行×${widths.length}列。请选择点文件（可多选）。`;
+                } catch (err) {
+                    sizeFileLoaded = false;
+                    document.getElementById('status').innerHTML = `❌ 尺寸解析错误: ${err.message}`;
+                }
+            };
+            reader.readAsText(file, 'UTF-8');
+        });
+
+        drawBtn.addEventListener('click', drawAll);
+        filterBtn.addEventListener('click', filterAndShow);
+        clearBtn.addEventListener('click', clearModels);
+        shallowClearBtn.addEventListener('click', shallowClear);
+        homeBtn.addEventListener('click', setHomeView);
+
+        document.getElementById('coreOnlyCheckbox').addEventListener('change', () => {
+            const onlyCore = document.getElementById('coreOnlyCheckbox').checked;
+            for (let cell of allSurfaceCells) {
+                const entity = viewer.entities.getById(cell.id);
+                if (entity) entity.show = onlyCore ? cell.isCore : true;
+            }
+        });
+
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(89.165560, 32.140830, 1500000),
+            orientation: { heading: 0, pitch: Cesium.Math.toRadians(-45), roll: 0 }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT三维可视化模型</title>
+    <script src="./Cesium/Cesium.js"></script>
+    <link rel="stylesheet" href="./Cesium/Widgets/widgets.css">
+    <style>
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+        .cesium-widget-credits { display: none; }
+        .floating-panel {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(30,30,40,0.85); backdrop-filter: blur(8px); border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            color: white; font-family: sans-serif; min-width: 320px;
+        }
+        .MT-head { padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; background: rgba(0,0,0,0.5); border-radius: 12px; }
+        .MT-head:hover { background: rgba(0,0,0,0.7); }
+        .set-input {
+            padding: 12px 16px;
+        }
+        .set-input label { display: block; margin-top: 8px; font-size: 14px; }
+        .set-input input, .set-input button { width: 100%; padding: 6px; margin-top: 4px; border-radius: 4px; border: none; box-sizing: border-box; }
+        .set-input button { background: #2c6e9e; color: white; cursor: pointer; }
+        .set-input button:hover { background: #1e4a6e; }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div class="floating-panel" id="controlPanel">
+        <div class="MT-head" id="MThead">
+            <span>控制面板</span>
+            <span id="toggleIcon">▲</span>
+        </div>
+        <div class="set-input" id="setinput">
+            <label>① 点位数据导入(.dat):</label>
+            <input type="file" id="setdatainput" multiple accept=".dat"/>
+            <label>输入高程（单位：米）：</label>
+            <input type="number" id="elevation" step=100>
+            <button id="showset">显示点位</button>
+        </div>
+        <div class="ws-input" id="wsinput">
+            <label>② 网格数据导入(.ws):</label>
+            <input type="file" id="wsdata" multiple accept=".ws"/>
+        </div>
+        <div>
+            <label>③ 三维电阻率文件导入(.xyz)</label>
+            <input type="file" id="3dresistivity" multiple accpet=".xyz"/>
+        </div>
+        <div>
+            <label><input type="checkbox" id="coreOnlyCheckbox">🔲显示核心区网格</label>
+        </div>
+        <div>
+            <label>电阻率筛选（显示实际电阻率&lt;输入的值）</label>
+            <input type="number" id="resistivitychoose">
+            <button id="shou3dmt">显示地下电阻率模型</button>
+        </div>
+    </div>
+
+    <script>
+        // 配置 Cesium token
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NDFmODMwYS02M2MxLTRmMGItYWY3YS01OTA4MTQ0ZWYxNTgiLCJpZCI6MzI4ODM5LCJpYXQiOjE3NTQzNzgxNjV9.EsQ8CtYMpEow4fVaI059dRmh54KXe2dEcpq6tP4J9vg';
+        
+        // 定义 viewer
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            animation: false, timeline: false, geocoder: false, 
+            sceneModePicker: false, navigationHelpButton: false, baseLayerPicker: false,
+        });
+
+        // 导入天地图
+        try {
+            const tdtProvider = new Cesium.WebMapTileServiceImageryProvider({
+                url: "http://t0.tianditu.gov.cn/img_w/wmts?tk=416f0b679ea2e217fbe325ead88ae8c9",
+                layer: "img", style: "default", format: "tiles", tileMatrixSetID: "w",
+                maximumLevel: 18, credit: new Cesium.Credit("天地图")
+            });
+            viewer.imageryLayers.addImageryProvider(tdtProvider);
+        } catch(e) { console.warn("天地图加载失败", e); }
+
+        // 加载在线地形
+        const terrain = Cesium.Terrain.fromWorldTerrain();
+        viewer.scene.setTerrain(terrain);
+
+        // 打开深度测试
+        viewer.scene.globe.depthTestAgainstTerrain = true;
+
+        // 设置默认 home 视角
+        const homeViewModel = viewer.homeButton.viewModel;
+        homeViewModel.command.beforeExecute.addEventListener(function(commandInfo) {
+            commandInfo.cancel = true;
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(108.5632, 34.1540, 10000000),
+                orientation: {
+                    heading: Cesium.Math.toRadians(0.0),
+                    roll: 0.0
+                },
+                duration: 2.0
+            });
+        });
+
+        // 固定相机视角
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(108.5632, 34.1540, 10000000),
+            orientation: {
+                heading: Cesium.Math.toRadians(0.0),
+                pitch: Cesium.Math.toRadians(-90),
+                roll: 0.0,
+            }
+        });
+
+        //MT点位显示
+        document.getElementById('showset').addEventListener('click', function() {
+            const setfileInput = document.getElementById('setdatainput');
+            const setfiles = setfileInput.files;
+            if (!setfiles || setfiles.length === 0) {
+                alert('请导入正确的 .dat数据文件!');
+                return;
+            }
+
+            // 获取高程值
+            const elevationInput = document.getElementById('elevation');
+            let ele = parseFloat(elevationInput.value);
+            if (isNaN(ele) || elevationInput.value.trim() === '') {
+            ele = 5500;// 默认5500 m
+            }
+
+            const setfile = setfiles[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const content = event.target.result;
+                const lines = content.split(/\r?\n/);
+                let addedCount = 0; //已添加的点的数量
+                const addedIds = new Set(); //已添加的点号
+
+                lines.forEach(line => {
+                    line = line.trim();
+                    if (line === '' || line.startsWith('#') || line.startsWith('>')) {
+                        return;
+                    }// 跳过空行、以 # 或 > 开头的注释行
+
+                    const parts = line.split(/\s+/);
+                    if (parts.length < 4) {
+                        return;
+                    }// 至少需要 序号、点号、纬度、经度
+
+                    const pointId = parts[1];       // 第2列为点号
+                    if (addedIds.has(pointId)) return;
+
+                    const lat = parseFloat(parts[2]); // 第3列为纬度
+                    const lon = parseFloat(parts[3]); // 第4列为经度
+                    if (isNaN(lat) || isNaN(lon)) {
+                        return;
+                    }
+
+                    // 添加点实体
+                    viewer.entities.add({
+                        id: pointId,
+                        position: Cesium.Cartesian3.fromDegrees(lon, lat, ele),
+                        point: {
+                            pixelSize: 10,
+                            color: Cesium.Color.AQUA,
+                            outlineColor: Cesium.Color.BLUE,
+                            outlineWidth: 2,
+                            scaleByDistance: new Cesium.NearFarScalar(800000, 1.0, 3000000, 0.3)
+                        },
+                        label: {
+                            text: pointId,
+                            font: '16px "微软雅黑", sans-serif',
+                            fillColor: Cesium.Color.WHITE,
+                            outlineWidth: 2,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            pixelOffset: new Cesium.Cartesian2(0, -20),
+                            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            backgroundPadding: new Cesium.Cartesian2(6, 4),
+                            scaleByDistance: new Cesium.NearFarScalar(0, 1.3, 700000, 0.6),
+                            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 700000)
+                        }
+                    });
+                    addedIds.add(pointId);
+                    addedCount++;
+                });
+
+                console.log(`成功添加 ${addedCount} 个点位`);
+                alert(`成功添加 ${addedCount} 个点位!`);
+            };
+            reader.onerror = function() {
+                console.error('文件读取失败');
+                alert('文件读取失败，请选择.dat文件');
+            };
+            reader.readAsText(setfile, 'UTF-8');
+        });
+
+        //研究区网格数据获取
+        function parseWsFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    try {
+                        const content = event.target.result;
+                        const lines = content.split(/\r?\n/);
+                        
+                        const xyz = lines[1].trim(); //网格文件第二行存储的为xyz方向的单元格数量
+                        const parts = xyz.split(/\s+/);
+
+                        const x = parseFloat(parts[0]); //南北向单元格数量
+                        const y = parseFloat(parts[1]); //东西向单元格数量
+                        const z = parseFloat(parts[2]); //地下单元格数量
+
+                        const targetLines = lines.slice(2); 
+                        const remainingText = targetLines.join('\n');
+                        const arr = remainingText.split(/\s+/).filter(item => item !== '');//去除前两行后合并
+
+                        const total = x + y + z;
+                        const gridx =arr.slice(0, x);//南北向每个单元格的宽度 单位：米
+                        const gridy =arr.slice(x, x + y);//东西向每个单元格的宽度 单位：米
+                        const gridz =arr.slice(x + y, total); //地下每个单元格的高度 单位：米
+
+                        if (isNaN(x) || isNaN(y) || isNaN(z)) {reject(new Error('解析出的数字无效')); return};
+                        resolve({ x, y, z, gridx, gridy, gridz});
+                    }
+                    catch (error) {reject(error);}
+                };
+                    reader.onerror = function() {reject(new Error('文件读取失败，请选择.ws文件'))};
+                    reader.readAsText(file);
+            });
+        };
+        
+        //全局缓存变量
+        let cachedParams = null; 
+        document.getElementById('wsdata').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            // 调用封装好的函数，把结果存起来
+            try { 
+                cachedParams = await parseWsFile(file);
+                console.log('文件解析成功，参数已缓存:', cachedParams);
+            }
+            catch (err) {
+                alert('解析失败：' + err.message);
+            }
+        });
+
+        //导入电阻率数据
+        const datasets = new Map();//存储所有深度切片
+        function depthinput(filename){ //从文件名提取每层的深度
+            const baseName = filename.split(/[\\/]/).pop();
+            const match = /Horizontal-([\d.]+)km\.xyz$/i.exec(baseName);
+            if (!match) return null;
+            return parseFloat(match[1]);
+        };
+
+        function depthresistivity(content){ //获取经纬度和电阻率值
+            const lines = content.split(/\r?\n/);
+            const positionres = [];
+            for(const line of lines){
+                const position =  line.trim();
+                if (!position) continue;
+                const parts = position.split(/\s+/);
+                if (parts.length < 3) continue;
+                const lon = parseFloat(parts[0]); //文件第一列为经度
+                const lat = parseFloat(parts[1]); //文件第二列为经度
+                const resistivity = 10**parseFloat(parts[2]); //文件第三列为lg欧姆米
+                if (isNaN(lon) || isNaN(lat) || isNaN(resistivity)) continue;
+                positionres.push({ lon, lat, resistivity });
+            };
+            return positionres;
+        };
+
+        function Horizontal(){ //读取文件 深度与电阻率
+            const resInput = document.getElementById('3dresistivity');
+            const resfile = resInput.files;
+            if (!resfile || resfile.length === 0) { alert('请选择.xyz文件'); return };
+            const promises = [];
+            for (const file of resfile) {
+                promises.push(new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onload = e => {
+                        const depth = depthinput(file.name); //导入文件名的深度
+                        const positionr = depthresistivity(e.target.result); //导入经纬度与电阻率值
+                        datasets.set(depth, positionr); 
+                        resolve();
+                    };
+                    reader.onerror = () => {resolve()};
+                    reader.readAsText(file);
+                }));
+            };
+        };
+
+        // 将 Horizontal() 绑定到 .xyz 文件选择事件
+        document.getElementById('3dresistivity').addEventListener('change', Horizontal);
+
+        // 计算数组众数（核心区判断依据）
+        function getMode(arr) {
+            const freq = {};
+            let maxFreq = 0, mode = null;
+            for (const v of arr) {
+                const val = Number(v);
+                freq[val] = (freq[val] || 0) + 1;
+                if (freq[val] > maxFreq) {
+                    maxFreq = freq[val];
+                    mode = val;
+                }
+            }
+            return mode;
+        }
+
+        // 存储网格实体
+        const gridEntities = [];
+        let gridCreated = false;
+        let modeGridx = null; // 核心区宽度（众数）
+        let modeGridy = null; // 核心区长度（众数）
+
+        // 绘制核心区网格
+        document.getElementById('coreOnlyCheckbox').addEventListener('change', function () {
+            const isChecked = this.checked;
+
+            if (!isChecked) {
+                for (const e of gridEntities) e.show = false;
+                return;
+            }
+
+            if (!cachedParams) {
+                alert('请先导入 .ws 网格数据文件');
+                this.checked = false;
+                return;
+            }
+            if (datasets.size === 0) {
+                alert('请先导入 .xyz 电阻率文件');
+                this.checked = false;
+                return;
+            }
+
+            const firstDepth = [...datasets.keys()].sort((a, b) => a - b)[0];
+            const positionres = datasets.get(firstDepth);
+            const { gridx, gridy } = cachedParams;
+            const nx = cachedParams.x;
+            const ny = cachedParams.y;
+
+            if (modeGridx === null) {
+                modeGridx = getMode(gridx);
+                modeGridy = getMode(gridy);
+                console.log(`核心区: 宽(南北向)=${modeGridx}m, 长(东西向)=${modeGridy}m`);
+            }
+
+            if (!gridCreated) {
+                for (let i = 0; i < nx; i++) {
+                    const w = parseFloat(gridx[i]);
+                    const isRowCore = (w === modeGridx);
+                    for (let j = 0; j < ny; j++) {
+                        const idx = i * ny + j;
+                        if (idx >= positionres.length) break;
+                        const { lon, lat } = positionres[idx];
+                        const l = parseFloat(gridy[j]);
+                        const isCore = isRowCore && (l === modeGridy);
+
+                        const latRad = Cesium.Math.toRadians(lat);
+                        const degPerMeterLon = 1 / (111320 * Math.cos(latRad));
+                        const degPerMeterLat = 1 / 111320;
+                        const dLon = l * degPerMeterLon;
+                        const dLat = w * degPerMeterLat;
+
+                        const corners = Cesium.Cartesian3.fromDegreesArray([
+                            lon, lat,
+                            lon + dLon, lat,
+                            lon + dLon, lat + dLat,
+                            lon, lat + dLat,
+                            lon, lat
+                        ]);
+
+                        const entity = viewer.entities.add({
+                            polyline: {
+                                positions: corners,
+                                width: 2,
+                                material: Cesium.Color.LIGHTGREEN,
+                                clampToGround: true
+                            },
+                            show: isCore
+                        });
+                        entity.isCore = isCore;
+                        gridEntities.push(entity);
+                    }
+                }
+                gridCreated = true;
+                const coreCount = gridEntities.filter(e => e.isCore).length;
+                console.log(`网格创建完成, 共 ${gridEntities.length} 个, 核心区 ${coreCount} 个`);
+            } else {
+                for (const e of gridEntities) {
+                    e.show = e.isCore;
+                }
+            }
+        });
+        
+
+        
+
+
+
+
+
+        
+
+    </script>
+</body>
+</html>

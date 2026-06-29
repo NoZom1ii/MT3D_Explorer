@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MT三维可视化模型</title>
+    <script src="./Cesium/Cesium.js">
+    </script>
+    <link rel="stylesheet" href="./Cesium/Widgets/widgets.css" />
+    <style>
+        /* ========== 基础重置 ========== */
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        .cesium-widget-credits {
+            display: none;
+        }
+
+        /* ========== 控制面板（左上） ========== */
+        .floating-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: rgba(30, 30, 40, 0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            color: white;
+            font-family: sans-serif;
+            min-width: 320px;
+            max-height: 90vh;
+            overflow-y: auto;
+            transition: box-shadow 0.3s;
+        }
+
+        /* 面板头部 — 点击折叠/展开 */
+        .MT-head {
+            padding: 12px 16px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 12px;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .MT-head:hover {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        /* 折叠图标 — 旋转动画 */
+        #toggleIcon {
+            display: inline-block;
+            transition: transform 0.35s ease;
+            font-size: 14px;
+        }
+        #toggleIcon.collapsed {
+            transform: rotate(180deg);
+        }
+
+        /* 面板主体 — 折叠时隐藏 */
+        .panel-body {
+            padding: 12px 16px;
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.3s ease;
+            max-height: 2000px;
+            /* 足够大，保证展开时完全显示 */
+            opacity: 1;
+        }
+        .panel-body.hidden {
+            display: none;
+            /* 直接隐藏，配合折叠图标旋转 */;
+        }
+
+        /* ========== 面板内部样式 ========== */
+        .section-group {
+            margin-bottom: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 10px;
+        }
+        .section-group:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        .section-group label,
+        .panel-body label {
+            display: block;
+            margin-top: 6px;
+            font-size: 13px;
+            color: #ccc;
+        }
+        .section-group input,
+        .section-group button {
+            width: 100%;
+            padding: 6px;
+            margin-top: 4px;
+            border-radius: 4px;
+            border: none;
+            box-sizing: border-box;
+        }
+        .section-group button {
+            background: #2c6e9e;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .section-group button:hover {
+            background: #1e4a6e;
+        }
+        .section-group input[type="file"] {
+            background: #3a3a4a;
+            color: white;
+        }
+        .section-group input[type="number"] {
+            background: #3a3a4a;
+            color: white;
+        }
+        .inline-label {
+            display: flex !important;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px !important;
+            cursor: pointer;
+        }
+        .inline-label input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+
+        /* ========== Home 按钮（右上） ========== */
+        .home-btn {
+            position: absolute;
+            top: 20px;
+            right: 70px;
+            z-index: 1000;
+            width: 44px;
+            height: 44px;
+            background: rgba(30, 30, 40, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            font-size: 22px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s, transform 0.15s;
+        }
+        .home-btn:hover {
+            background: rgba(60, 60, 80, 0.9);
+            transform: scale(1.05);
+        }
+
+        /* ========== 透明度控制条（独立，位于 Home 按钮正下方） ========== */
+        .opacity-control {
+            position: absolute;
+            top: 74px;
+            /* Home 按钮 (20px) + 高度 (44px) + 间距 (10px) */
+            right: 70px;
+            z-index: 1000;
+            width: 130px;
+            min-width: 140px;
+            background: rgba(30, 30, 40, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 8px 12px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 13px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            user-select: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            transition: opacity 0.25s ease;
+        }
+        .opacity-control .label-row {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .opacity-control input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+            background: transparent;
+            accent-color: #5b9bd5;
+            height: 6px;
+            border-radius: 4px;
+            margin: 2px 0;
+        }
+        .opacity-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #5b9bd5;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .opacity-control input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #5b9bd5;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* ========== 色度条（右下） ========== */
+        .color-legend-container {
+            position: absolute;
+            bottom: 60px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(30, 30, 40, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 8px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        }
+        .color-legend-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        .color-legend-header .max-val {
+            cursor: pointer;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        .color-legend-header .max-val:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        .color-legend-fold {
+            cursor: pointer;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        .color-legend-fold:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        .color-legend-body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .color-legend-body.hidden {
+            display: none;
+        }
+        .color-bar-canvas {
+            width: 30px;
+            height: 200px;
+            border-radius: 4px;
+        }
+
+        /* ========== 响应式微调 ========== */
+        @media (max-width: 640px) {
+            .floating-panel {
+                min-width: 260px;
+                top: 12px;
+                left: 12px;
+                max-height: 80vh;
+            }
+            .home-btn {
+                width: 38px;
+                height: 38px;
+                font-size: 18px;
+                right: 12px;
+                top: 12px;
+            }
+            .opacity-control {
+                top: 60px;
+                right: 12px;
+                min-width: 110px;
+                width: 110px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            .color-legend-container {
+                bottom: 30px;
+                right: 10px;
+                padding: 6px;
+            }
+            .color-bar-canvas {
+                height: 140px;
+                width: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <!-- ===== 控制面板（左上） ===== -->
+    <div class="floating-panel" id="controlPanel">
+        <div class="MT-head" id="MThead">
+            <span>控制面板</span>
+            <span id="toggleIcon">▲</span>
+        </div>
+        <div class="panel-body" id="panelBody">
+            <div class="section-group">
+                <label style="font-weight: bold; color: #fff;">① 点位数据</label>
+                <label>导入 .dat 文件：</label>
+                <input type="file" id="setdatainput" multiple accept=".dat" />
+                <label>输入高程（米）：</label>
+                <input type="number" id="elevation" step="100" value="5500" />
+                <label class="inline-label"><input type="checkbox" id="showPointsCheckbox" /> 显示点位</label>
+            </div>
+            <div class="section-group">
+                <label style="font-weight: bold; color: #fff;">② 核心区网格</label>
+                <label>导入 .ws 网格文件：</label>
+                <input type="file" id="wsdata" multiple accept=".ws" />
+                <label class="inline-label"><input type="checkbox" id="coreOnlyCheckbox" /> 显示核心区网格</label>
+            </div>
+            <div class="section-group">
+                <label style="font-weight: bold; color: #fff;">③ 三维电阻率模型</label>
+                <label>导入 .xyz 电阻率文件：</label>
+                <input type="file" id="3dresistivity" multiple accept=".xyz" />
+                <label>电阻率筛选（显示 ρ &lt; 输入值）：</label>
+                <input type="number" id="resistivitychoose" step="5" value="100" />
+                <button id="shou3dmt">显示地下电阻率模型</button>
+            </div>
+            <div class="section-group">
+                <label style="font-weight: bold; color: #fff;">④ 深度筛选</label>
+                <label>隐藏深度小于以下值的单元体（km）：</label>
+                <input type="number" id="depthFilter" step="0.1" value="0" />
+                <button id="applyDepthFilter">应用深度筛选</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Home 按钮（右上） ===== -->
+    <div class="home-btn" id="homeBtn" title="飞到中心网格">🏠</div>
+
+    <!-- ===== 透明度控制条（独立，位于 Home 正下方） ===== -->
+    <div class="opacity-control" id="opacityControl">
+        <div class="label-row">
+            <span>🌍 地球透明度</span>
+            <span id="opacityValue">100%</span>
+        </div>
+        <input type="range" id="opacitySlider" min="0" max="100" value="100" />
+    </div>
+
+    <!-- ===== 色度条（右下） ===== -->
+    <div class="color-legend-container" id="colorLegend">
+        <div class="color-legend-header">
+            <span class="max-val" id="legendMaxVal" title="点击修改最大值">1000</span>
+            <span class="color-legend-fold" id="legendFold">▼</span>
+        </div>
+        <div class="color-legend-body" id="legendBody">
+            <canvas id="colorBarCanvas" class="color-bar-canvas" width="30" height="200"></canvas>
+            <span style="margin-top: 4px; font-size: 10px; color: #aaa;">0</span>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        //  Cesium 初始化
+        // ============================================================
+        Cesium.Ion.defaultAccessToken =
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NDFmODMwYS02M2MxLTRmMGItYWY3YS01OTA4MTQ0ZWYxNTgiLCJpZCI6MzI4ODM5LCJpYXQiOjE3NTQzNzgxNjV9.EsQ8CtYMpEow4fVaI059dRmh54KXe2dEcpq6tP4J9vg';
+
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            animation: false,
+            timeline: false,
+            geocoder: false,
+            sceneModePicker: false,
+            navigationHelpButton: false,
+            baseLayerPicker: false,
+        });
+
+        // 天地图底图
+        try {
+            viewer.imageryLayers.addImageryProvider(
+                new Cesium.WebMapTileServiceImageryProvider({
+                    url: "http://t0.tianditu.gov.cn/img_w/wmts?tk=416f0b679ea2e217fbe325ead88ae8c9",
+                    layer: "img",
+                    style: "default",
+                    format: "tiles",
+                    tileMatrixSetID: "w",
+                    maximumLevel: 18,
+                    credit: new Cesium.Credit("天地图")
+                })
+            );
+        } catch (e) { console.warn("天地图加载失败", e); }
+
+        viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
+        viewer.scene.globe.depthTestAgainstTerrain = true;
+
+        // 自定义 Home 视角
+        const homeViewModel = viewer.homeButton.viewModel;
+        homeViewModel.command.beforeExecute.addEventListener(function(commandInfo) {
+            commandInfo.cancel = true;
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(108.5632, 34.1540, 10000000),
+                orientation: { heading: Cesium.Math.toRadians(0.0), roll: 0.0 },
+                duration: 2.0
+            });
+        });
+
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(108.5632, 34.1540, 10000000),
+            orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90), roll: 0.0 }
+        });
+
+        // ============================================================
+        //  全局变量
+        // ============================================================
+        let cachedParams = null;
+        const datasets = new Map();
+        const gridEntities = [];
+        let gridCreated = false;
+        let modeGridx = null,
+            modeGridy = null;
+        let coreCellMeta = [];
+        let centerLon = 108.5632,
+            centerLat = 34.1540;
+        let cubeEntities = [];
+        let cubesCreated = false;
+        let pointEntities = [];
+        let pointsCreated = false;
+
+        // ============================================================
+        //  工具函数
+        // ============================================================
+        function offsetByMeters(lng, lat, east, north) {
+            const latRad = lat * Math.PI / 180;
+            const perDegLat = 111320;
+            const perDegLng = 111320 * Math.cos(latRad);
+            return { lng: lng + east / perDegLng, lat: lat + north / perDegLat };
+        }
+
+        function getMode(arr) {
+            const freq = {};
+            let maxFreq = 0,
+                mode = null;
+            for (const v of arr) {
+                const val = Number(v);
+                freq[val] = (freq[val] || 0) + 1;
+                if (freq[val] > maxFreq) { maxFreq = freq[val];
+                    mode = val; }
+            }
+            return mode;
+        }
+
+        function resistivityToColor(value, maxVal) {
+            const t = Math.min(value / maxVal, 1);
+            const hue = t * 240;
+            return Cesium.Color.fromHsl(hue / 360, 0.9, 0.5);
+        }
+
+        function drawColorBar(maxVal) {
+            const canvas = document.getElementById('colorBarCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width,
+                h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+            for (let y = 0; y < h; y++) {
+                const t = y / h;
+                const hue = t * 240;
+                ctx.fillStyle = Cesium.Color.fromHsl(hue / 360, 0.9, 0.5).toCssColorString();
+                ctx.fillRect(0, h - y, w, 1);
+            }
+            document.getElementById('legendMaxVal').textContent = maxVal;
+        }
+
+        function flyToCenter() {
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 1000000),
+                orientation: { heading: Cesium.Math.toRadians(0.0), pitch: Cesium.Math.toRadians(-90), roll: 0.0 },
+                duration: 2.0
+            });
+        }
+
+        // ============================================================
+        //  Home 按钮
+        // ============================================================
+        document.getElementById('homeBtn').addEventListener('click', flyToCenter);
+
+        // ============================================================
+        //  控制面板折叠 / 展开  （修复：使用正确的 panelBody 引用）
+        // ============================================================
+        document.getElementById('MThead').addEventListener('click', function() {
+            const panelBody = document.getElementById('panelBody');
+            const icon = document.getElementById('toggleIcon');
+            panelBody.classList.toggle('hidden');
+            icon.classList.toggle('collapsed');
+        });
+
+        // ============================================================
+        //  地球透明度控制（独立于面板，始终可用）
+        // ============================================================
+        const opacitySlider = document.getElementById('opacitySlider');
+        const opacityValue = document.getElementById('opacityValue');
+
+        // input 事件：实时更新数字
+        opacitySlider.addEventListener('input', function() {
+            opacityValue.textContent = parseInt(this.value) + '%';
+        });
+
+        // change 事件：松手后真正修改地球透明度
+        opacitySlider.addEventListener('change', function() {
+            const val = parseInt(this.value) / 100;
+            opacityValue.textContent = parseInt(this.value) + '%';
+            try {
+                if (typeof Cesium.GlobeTranslucency !== 'undefined') {
+                    if (!viewer.scene.globe.translucency) {
+                        viewer.scene.globe.translucency = new Cesium.GlobeTranslucency();
+                    }
+                    viewer.scene.globe.translucency.enabled = (val < 1.0);
+                    viewer.scene.globe.translucency.frontFaceAlpha = val;
+                    viewer.scene.globe.translucency.backFaceAlpha = val;
+                } else {
+                    for (let i = 0; i < viewer.imageryLayers.length; i++) {
+                        viewer.imageryLayers.get(i).alpha = val;
+                    }
+                }
+            } catch (e) {
+                console.warn('透明度控制降级:', e.message);
+                for (let i = 0; i < viewer.imageryLayers.length; i++) {
+                    viewer.imageryLayers.get(i).alpha = val;
+                }
+            }
+        });
+
+        // ============================================================
+        //  色度条折叠
+        // ============================================================
+        document.getElementById('legendFold').addEventListener('click', function() {
+            const body = document.getElementById('legendBody');
+            body.classList.toggle('hidden');
+            this.textContent = body.classList.contains('hidden') ? '▲' : '▼';
+        });
+
+        // ============================================================
+        //  色度条最大值点击修改
+        // ============================================================
+        document.getElementById('legendMaxVal').addEventListener('click', function() {
+            const current = parseFloat(this.textContent);
+            const input = prompt('输入色度条最大值：', current);
+            if (input !== null) {
+                const val = parseFloat(input);
+                if (!isNaN(val) && val > 0) {
+                    drawColorBar(val);
+                    for (const ent of cubeEntities) {
+                        if (!ent._resistivityData) continue;
+                        ent.box.material = resistivityToColor(ent._resistivityData, val);
+                    }
+                }
+            }
+        });
+
+        // ============================================================
+        //  点位数据
+        // ============================================================
+        document.getElementById('showPointsCheckbox').addEventListener('change', function() {
+            if (this.checked) loadAndShowPoints();
+            else hidePoints();
+        });
+
+        function loadAndShowPoints() {
+            const files = document.getElementById('setdatainput').files;
+            if (!files || files.length === 0) {
+                alert('请先选择 .dat 文件');
+                document.getElementById('showPointsCheckbox').checked = false;
+                return;
+            }
+            const ele = parseFloat(document.getElementById('elevation').value) || 5500;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                hidePoints();
+                const lines = event.target.result.split(/\r?\n/);
+                const addedIds = new Set();
+                let count = 0;
+                for (const line of lines) {
+                    const t = line.trim();
+                    if (!t || t.startsWith('#') || t.startsWith('>')) continue;
+                    const p = t.split(/\s+/);
+                    if (p.length < 4) continue;
+                    const id = p[1];
+                    if (addedIds.has(id)) continue;
+                    const lat = parseFloat(p[2]),
+                        lon = parseFloat(p[3]);
+                    if (isNaN(lat) || isNaN(lon)) continue;
+                    const entity = viewer.entities.add({
+                        id: 'pt_' + id,
+                        position: Cesium.Cartesian3.fromDegrees(lon, lat, ele),
+                        point: {
+                            pixelSize: 10,
+                            color: Cesium.Color.AQUA,
+                            outlineColor: Cesium.Color.BLUE,
+                            outlineWidth: 2,
+                            scaleByDistance: new Cesium.NearFarScalar(800000, 1.0, 3000000, 0.3)
+                        },
+                        label: {
+                            text: id,
+                            font: '16px "微软雅黑", sans-serif',
+                            fillColor: Cesium.Color.WHITE,
+                            outlineWidth: 2,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            pixelOffset: new Cesium.Cartesian2(0, -20),
+                            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            backgroundPadding: new Cesium.Cartesian2(6, 4),
+                            scaleByDistance: new Cesium.NearFarScalar(0, 1.3, 700000, 0.6),
+                            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 700000)
+                        }
+                    });
+                    pointEntities.push(entity);
+                    addedIds.add(id);
+                    count++;
+                }
+                pointsCreated = true;
+                console.log('点位加载完成，共 ' + count + ' 个');
+                if (count === 0) alert('文件中未找到有效点位数据');
+            };
+            reader.onerror = () => alert('文件读取失败');
+            reader.readAsText(files[0], 'UTF-8');
+        }
+
+        function hidePoints() {
+            for (const e of pointEntities) viewer.entities.remove(e);
+            pointEntities = [];
+            pointsCreated = false;
+        }
+
+        document.getElementById('elevation').addEventListener('change', function() {
+            if (document.getElementById('showPointsCheckbox').checked) {
+                hidePoints();
+                loadAndShowPoints();
+            }
+        });
+
+        // ============================================================
+        //  网格解析
+        // ============================================================
+        function parseWsFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    try {
+                        const lines = event.target.result.split(/\r?\n/);
+                        const xyz = lines[1].trim().split(/\s+/);
+                        const x = parseFloat(xyz[0]),
+                            y = parseFloat(xyz[1]),
+                            z = parseFloat(xyz[2]);
+                        const arr = lines.slice(2).join('\n').split(/\s+/).filter(i => i !== '');
+                        const total = x + y + z;
+                        if (isNaN(x) || isNaN(y) || isNaN(z)) { reject(new Error('数字无效')); return; }
+                        resolve({ x, y, z, gridx: arr.slice(0, x), gridy: arr.slice(x, x + y), gridz: arr.slice(x + y,
+                                total) });
+                    } catch (err) { reject(err); }
+                };
+                reader.onerror = () => reject(new Error('文件读取失败'));
+                reader.readAsText(file);
+            });
+        }
+
+        document.getElementById('wsdata').addEventListener('change', async(event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            try {
+                cachedParams = await parseWsFile(file);
+                console.log('网格解析成功:', cachedParams);
+            } catch (err) { alert('解析失败：' + err.message); }
+        });
+
+        // ============================================================
+        //  电阻率数据
+        // ============================================================
+        function depthinput(filename) {
+            const m = /Horizontal-([\d.]+)km\.xyz$/i.exec(filename.split(/[\\/]/).pop());
+            return m ? parseFloat(m[1]) : null;
+        }
+
+        function depthresistivity(content) {
+            const points = [];
+            for (const line of content.split(/\r?\n/)) {
+                const t = line.trim();
+                if (!t) continue;
+                const p = t.split(/\s+/);
+                if (p.length < 3) continue;
+                const lon = parseFloat(p[0]),
+                    lat = parseFloat(p[1]),
+                    r = Math.pow(10, parseFloat(p[2]));
+                if (isNaN(lon) || isNaN(lat) || isNaN(r)) continue;
+                points.push({ lon, lat, resistivity: r });
+            }
+            return points;
+        }
+
+        function Horizontal() {
+            const files = document.getElementById('3dresistivity').files;
+            if (!files || files.length === 0) { alert('请选择.xyz文件'); return; }
+            const promises = [];
+            for (const file of files) {
+                promises.push(new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onload = e => {
+                        const d = depthinput(file.name);
+                        if (d !== null) datasets.set(d, depthresistivity(e.target.result));
+                        resolve();
+                    };
+                    reader.onerror = () => resolve();
+                    reader.readAsText(file);
+                }));
+            }
+            Promise.all(promises).then(() => {
+                console.log('电阻率导入完成，共 ' + datasets.size + ' 层');
+            });
+        }
+        document.getElementById('3dresistivity').addEventListener('change', Horizontal);
+
+        // ============================================================
+        //  核心区网格
+        // ============================================================
+        document.getElementById('coreOnlyCheckbox').addEventListener('change', function() {
+            if (!this.checked) {
+                for (const e of gridEntities) e.show = false;
+                return;
+            }
+            if (!cachedParams) { alert('请先导入 .ws 文件');
+                this.checked = false; return; }
+            if (datasets.size === 0) { alert('请先导入 .xyz 文件');
+                this.checked = false; return; }
+            const firstDepth = [...datasets.keys()].sort((a, b) => a - b)[0];
+            const positionres = datasets.get(firstDepth);
+            const { gridx, gridy } = cachedParams;
+            const nx = cachedParams.x,
+                ny = cachedParams.y;
+            if (modeGridx === null) {
+                modeGridx = getMode(gridx);
+                modeGridy = getMode(gridy);
+                console.log('核心区: 宽=' + modeGridx + 'm, 长=' + modeGridy + 'm');
+            }
+            if (!gridCreated) {
+                coreCellMeta = [];
+                for (let i = 0; i < nx; i++) {
+                    const w = parseFloat(gridx[i]);
+                    const isRowCore = (w === modeGridx);
+                    for (let j = 0; j < ny; j++) {
+                        const idx = i * ny + j;
+                        if (idx >= positionres.length) break;
+                        const { lon, lat } = positionres[idx];
+                        const l = parseFloat(gridy[j]);
+                        const isCore = isRowCore && (l === modeGridy);
+                        const latRad = Cesium.Math.toRadians(lat);
+                        const dLon = l / (111320 * Math.cos(latRad));
+                        const dLat = w / 111320;
+                        const corners = Cesium.Cartesian3.fromDegreesArray([
+                            lon, lat, lon + dLon, lat,
+                            lon + dLon, lat + dLat, lon, lat + dLat, lon, lat
+                        ]);
+                        const entity = viewer.entities.add({
+                            polyline: { positions: corners, width: 2, material: Cesium.Color.LIGHTGREEN,
+                                clampToGround: true },
+                            show: isCore
+                        });
+                        entity.isCore = isCore;
+                        gridEntities.push(entity);
+                        if (isCore) {
+                            coreCellMeta.push({
+                                row: i,
+                                col: j,
+                                idx: idx,
+                                lon: lon,
+                                lat: lat,
+                                length: l,
+                                width: w,
+                                centerLon: lon + dLon / 2,
+                                centerLat: lat + dLat / 2,
+                                resistivity: positionres[idx].resistivity
+                            });
+                        }
+                    }
+                }
+                gridCreated = true;
+                const coreCount = gridEntities.filter(e => e.isCore).length;
+                console.log('网格创建完成, 共 ' + gridEntities.length + ' 个, 核心区 ' + coreCount + ' 个');
+                if (coreCellMeta.length > 0) {
+                    const coreRows = [...new Set(coreCellMeta.map(c => c.row))].sort((a, b) => a - b);
+                    const coreCols = [...new Set(coreCellMeta.map(c => c.col))].sort((a, b) => a - b);
+                    const midRow = coreRows[Math.floor(coreRows.length / 2)];
+                    const midCol = coreCols[Math.floor(coreCols.length / 2)];
+                    const centerCell = coreCellMeta.find(c => c.row === midRow && c.col === midCol);
+                    centerLon = centerCell.centerLon;
+                    centerLat = centerCell.centerLat;
+                    console.log('中心网格: (行' + midRow + ', 列' + midCol + ') → (' + centerLon.toFixed(4) + ', ' +
+                        centerLat.toFixed(4) + ')');
+                }
+            } else {
+                for (const e of gridEntities) e.show = e.isCore;
+            }
+        });
+
+        // ============================================================
+        //  三维电阻率模型（地下立方体）
+        // ============================================================
+        function buildUndergroundCubes(resThreshold) {
+            for (const e of cubeEntities) viewer.entities.remove(e);
+            cubeEntities = [];
+            cubesCreated = false;
+            if (!cachedParams || coreCellMeta.length === 0) {
+                console.warn('数据未就绪，请先导入网格文件和电阻率文件');
+                return;
+            }
+            const { gridz } = cachedParams;
+            const zCount = cachedParams.z;
+            const sortedDepths = [...datasets.keys()].sort((a, b) => a - b);
+            const layers = Math.min(sortedDepths.length, zCount);
+            let cumulativeHeight = 0;
+            let totalCubes = 0;
+            const maxVal = parseFloat(document.getElementById('legendMaxVal').textContent) || 1000;
+            for (let k = 0; k < layers; k++) {
+                const depth = sortedDepths[k];
+                const layerResData = datasets.get(depth);
+                const layerHeight = parseFloat(gridz[k]);
+                for (const cell of coreCellMeta) {
+                    const idx = cell.idx;
+                    if (idx >= layerResData.length) continue;
+                    const resistivity = layerResData[idx].resistivity;
+                    const rMin = 5;
+                    const rNear = resThreshold - 5;
+                    let cubeOpacity;
+                    if (resistivity <= rMin) cubeOpacity = 1.0;
+                    else if (resistivity >= rNear || resThreshold <= 5) cubeOpacity = 0.3;
+                    else cubeOpacity = 1.0 - (resistivity - rMin) / (rNear - rMin) * 0.7;
+                    if (resistivity >= resThreshold) continue;
+                    const topZ = -cumulativeHeight;
+                    const bottomZ = -(cumulativeHeight + layerHeight);
+                    const centerZ = (topZ + bottomZ) / 2;
+                    const color = resistivityToColor(resistivity, maxVal);
+                    const halfW = cell.length / 2,
+                        halfH = cell.width / 2;
+                    const boxCenter = offsetByMeters(cell.lon, cell.lat, halfW, halfH);
+                    const entity = viewer.entities.add({
+                        position: Cesium.Cartesian3.fromDegrees(boxCenter.lng, boxCenter.lat, centerZ),
+                        box: {
+                            dimensions: new Cesium.Cartesian3(cell.length, cell.width, layerHeight),
+                            material: color.withAlpha(cubeOpacity),
+                            outline: false,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY
+                        }
+                    });
+                    entity._resistivityData = resistivity;
+                    entity._depth = depth;
+                    cubeEntities.push(entity);
+                    totalCubes++;
+                }
+                cumulativeHeight += layerHeight;
+            }
+            cubesCreated = true;
+            console.log('地下立方体绘制完成，共 ' + totalCubes + ' 个（阈值=' + resThreshold + '）');
+        }
+
+        document.getElementById('shou3dmt').addEventListener('click', function() {
+            const threshold = parseFloat(document.getElementById('resistivitychoose').value);
+            if (isNaN(threshold) || threshold <= 0) { alert('请输入有效的电阻率阈值'); return; }
+            buildUndergroundCubes(threshold);
+        });
+
+        document.getElementById('resistivitychoose').addEventListener('change', function() {
+            const val = parseFloat(this.value);
+            if (!isNaN(val) && val > 0 && cubesCreated) buildUndergroundCubes(val);
+        });
+
+        // ============================================================
+        //  深度筛选
+        // ============================================================
+        document.getElementById('applyDepthFilter').addEventListener('click', function() {
+            const threshold = parseFloat(document.getElementById('depthFilter').value);
+            if (isNaN(threshold) || threshold <= 0) { alert('请输入有效的深度值'); return; }
+            let hiddenCount = 0;
+            for (const e of cubeEntities) {
+                if (e._depth && e._depth < threshold) {
+                    e.show = false;
+                    hiddenCount++;
+                }
+            }
+            console.log('深度筛选: 隐藏了 ' + hiddenCount + ' 个深度 < ' + threshold + ' km 的单元体');
+        });
+
+        // ============================================================
+        //  初始化色度条
+        // ============================================================
+        drawColorBar(1000);
+
+        console.log('✅ 页面已加载 — 控制面板可折叠，透明度控制条位于 Home 按钮下方');
+    </script>
+</body>
+</html>

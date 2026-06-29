@@ -1,0 +1,18 @@
+﻿# Node
+node_modules/
+npm-debug.log*
+
+# Build output
+Build/
+AppData/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sln
+*.suo
